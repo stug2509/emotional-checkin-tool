@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { format } from 'date-fns'
+import EmotionTrends from '../components/EmotionTrends'
+import QuickCheckIn from '../components/QuickCheckIn'
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const [checkIns, setCheckIns] = useState([])
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('trends') // 'trends' or 'history'
 
   useEffect(() => {
     fetchCheckIns()
@@ -60,19 +63,45 @@ export default function Dashboard() {
 
       {/* Main content */}
       <main className="max-w-4xl mx-auto px-4 py-8">
-        {/* New check-in button */}
-        <div className="mb-8 text-center">
-          <button 
-            onClick={() => navigate('/checkin')}
-            className="btn-primary"
-          >
-            Start New Check-In
-          </button>
+        {/* Quick Check-In */}
+        <div className="mb-8">
+          <QuickCheckIn onComplete={fetchCheckIns} />
         </div>
 
-        {/* Check-ins list */}
-        <div className="space-y-4">
-          <h2 className="text-lg font-medium text-gray-900">Your Check-In History</h2>
+        {/* Tab Navigation */}
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('trends')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'trends'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Trends & Insights
+              </button>
+              <button
+                onClick={() => setActiveTab('history')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'history'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Check-In History
+              </button>
+            </nav>
+          </div>
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === 'trends' ? (
+          <EmotionTrends checkIns={checkIns} />
+        ) : (
+          <div className="space-y-4">
+            <h2 className="text-lg font-medium text-gray-900">Your Check-In History</h2>
           
           {checkIns.length === 0 ? (
             <div className="card text-center py-12">
@@ -118,7 +147,8 @@ export default function Dashboard() {
               </div>
             ))
           )}
-        </div>
+          </div>
+        )}
       </main>
     </div>
   )

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { validateEmail, sanitizeText } from '../utils/validation'
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
@@ -9,8 +10,15 @@ export default function LoginForm() {
   const handleLogin = async (e) => {
     e.preventDefault()
     
-    if (!email) {
+    const sanitizedEmail = sanitizeText(email)
+    
+    if (!sanitizedEmail) {
       setMessage('Please enter your email')
+      return
+    }
+
+    if (!validateEmail(sanitizedEmail)) {
+      setMessage('Please enter a valid email address')
       return
     }
 
@@ -18,10 +26,13 @@ export default function LoginForm() {
     setMessage('')
 
     try {
+      console.log('Sending magic link to:', sanitizedEmail.toLowerCase().trim())
+      console.log('Redirect URL:', window.location.origin)
+      
       const { error } = await supabase.auth.signInWithOtp({
-        email: email.toLowerCase().trim(),
+        email: sanitizedEmail.toLowerCase().trim(),
         options: {
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: `${window.location.origin}/`,
         },
       })
 

@@ -1,50 +1,47 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { identifyEmotions } from '../lib/openai'
+import { validateReflection } from '../utils/validation'
+import EnhancedEmotionSelector from '../components/EnhancedEmotionSelector'
+import GuidedReflection from '../components/GuidedReflection'
 
 export default function CheckIn() {
   const navigate = useNavigate()
-  const [step, setStep] = useState(1)
+  const [step, setStep] = useState(1) // 1: emotions, 2: reflection, 3: summary
   const [loading, setLoading] = useState(false)
   const [checkInData, setCheckInData] = useState({
-    feelingDescription: '',
-    suggestedEmotions: [],
     selectedEmotions: [],
-    reflection: ''
+    reflectionData: null,
+    quickNotes: ''
   })
+  const [errors, setErrors] = useState({})
 
-  // Step 1: Describe feelings
-  const handleFeelingSubmit = async (e) => {
-    e.preventDefault()
-    if (!checkInData.feelingDescription.trim()) return
-
-    setLoading(true)
-    try {
-      const emotions = await identifyEmotions(checkInData.feelingDescription)
-      setCheckInData(prev => ({ ...prev, suggestedEmotions: emotions }))
-      setStep(2)
-    } catch (error) {
-      console.error('Error:', error)
-    } finally {
-      setLoading(false)
-    }
+  // Handle emotion selection
+  const handleEmotionSelect = (emotion) => {
+    setCheckInData(prev => ({
+      ...prev,
+      selectedEmotions: [...prev.selectedEmotions, emotion]
+    }))
   }
 
-  // Step 2: Select emotions
-  const toggleEmotion = (emotion) => {
-    setCheckInData(prev => {
-      const isSelected = prev.selectedEmotions.some(e => e.name === emotion.name)
-      return {
-        ...prev,
-        selectedEmotions: isSelected
-          ? prev.selectedEmotions.filter(e => e.name !== emotion.name)
-          : [...prev.selectedEmotions, emotion]
-      }
-    })
+  // Handle reflection completion
+  const handleReflectionComplete = (reflectionData) => {
+    setCheckInData(prev => ({
+      ...prev,
+      reflectionData
+    }))
+    setStep(3)
   }
 
-  // Step 3: Save check-in
+  // Remove emotion
+  const removeEmotion = (emotionIndex) => {
+    setCheckInData(prev => ({
+      ...prev,
+      selectedEmotions: prev.selectedEmotions.filter((_, index) => index !== emotionIndex)
+    }))
+  }
+
+  // Save enhanced check-in
   const handleSaveCheckIn = async () => {
     if (checkInData.selectedEmotions.length === 0) return
 
@@ -52,17 +49,31 @@ export default function CheckIn() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       
-      const { error } = await supabase.from('checkins').insert({
+      // Prepare enhanced check-in data
+      const checkInRecord = {
         user_id: user.id,
-        feeling_description: checkInData.feelingDescription,
         emotions: checkInData.selectedEmotions,
-        reflection: checkInData.reflection
-      })
+        feeling_description: `Enhanced check-in with ${checkInData.selectedEmotions.length} emotions`,
+        reflection: checkInData.quickNotes || '',
+        // Store reflection data as metadata
+        metadata: {
+          reflectionData: checkInData.reflectionData,
+          emotionCategories: [...new Set(checkInData.selectedEmotions.map(e => e.category))],
+          avgIntensity: Math.round(
+            checkInData.selectedEmotions.reduce((sum, e) => sum + e.intensity, 0) / 
+            checkInData.selectedEmotions.length * 10
+          ) / 10,
+          enhancedVersion: true
+        }
+      }
 
+      const { error } = await supabase.from('checkins').insert(checkInRecord)
       if (error) throw error
+      
       navigate('/')
     } catch (error) {
       console.error('Error saving check-in:', error)
+      setErrors({ save: 'Failed to save check-in. Please try again.' })
     } finally {
       setLoading(false)
     }
@@ -70,11 +81,22 @@ export default function CheckIn() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-2xl mx-auto px-4">
+      <div className="max-w-4xl mx-auto px-4">
         {/* Progress indicator */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-600">Step {step} of 3</span>
+            <span className="text-sm text-gray-600">
+              Step {step} of 3: {
+                step === 1 ? 'Select Emotions' :
+                step === 2 ? 'Guided Reflection' : 'Review & Save'
+              }
+            </span>
+            <button 
+              onClick={() => navigate('/')}
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2">
             <div 
@@ -84,116 +106,168 @@ export default function CheckIn() {
           </div>
         </div>
 
-        {/* Step 1: Describe feelings */}
+        {/* Step 1: Enhanced Emotion Selection */}
         {step === 1 && (
-          <div className="card">
-            <h2 className="text-2xl font-semibold mb-4">How are you feeling right now?</h2>
-            <p className="text-gray-600 mb-6">
-              Take a moment to tune in. Describe what you're experiencing physically or emotionally.
-            </p>
-            <form onSubmit={handleFeelingSubmit}>
-              <textarea
-                value={checkInData.feelingDescription}
-                onChange={(e) => setCheckInData(prev => ({ ...prev, feelingDescription: e.target.value }))}
-                placeholder="I'm feeling... (e.g., tightness in my chest, restless, like I'm waiting for something)"
-                className="input-field min-h-[120px] mb-4"
-                required
-              />
-              <button type="submit" disabled={loading} className="btn-primary">
-                {loading ? 'Processing...' : 'Continue'}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* Step 2: Select emotions */}
-        {step === 2 && (
-          <div className="card">
-            <h2 className="text-2xl font-semibold mb-4">Which emotions resonate with you?</h2>
-            <p className="text-gray-600 mb-6">
-              Based on your description, here are some emotions you might be experiencing. Select all that feel true.
-            </p>
-            <div className="space-y-3 mb-6">
-              {checkInData.suggestedEmotions.map((emotion) => {
-                const isSelected = checkInData.selectedEmotions.some(e => e.name === emotion.name)
-                return (
-                  <button
-                    key={emotion.name}
-                    onClick={() => toggleEmotion(emotion)}
-                    className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
-                      isSelected 
-                        ? 'border-primary bg-blue-50' 
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-medium text-gray-900">{emotion.name}</h3>
-                        <p className="text-sm text-gray-600 mt-1">{emotion.definition}</p>
-                      </div>
-                      <span className="text-sm text-gray-500 ml-4">
-                        Intensity: {emotion.intensity}/10
-                      </span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setStep(1)} 
-                className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Back
-              </button>
-              <button 
-                onClick={() => setStep(3)} 
-                disabled={checkInData.selectedEmotions.length === 0}
-                className="btn-primary"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Reflection */}
-        {step === 3 && (
-          <div className="card">
-            <h2 className="text-2xl font-semibold mb-4">Take a moment to reflect</h2>
-            <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-2">You're feeling:</p>
-              <div className="flex flex-wrap gap-2">
-                {checkInData.selectedEmotions.map(emotion => (
-                  <span key={emotion.name} className="px-3 py-1 bg-white rounded-full text-sm font-medium">
-                    {emotion.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <p className="text-gray-600 mb-6">
-              Would you like to add any thoughts or reflections about these feelings?
-            </p>
-            <textarea
-              value={checkInData.reflection}
-              onChange={(e) => setCheckInData(prev => ({ ...prev, reflection: e.target.value }))}
-              placeholder="Any thoughts, patterns you notice, or things you want to remember... (optional)"
-              className="input-field min-h-[100px] mb-6"
+          <div className="space-y-6">
+            <EnhancedEmotionSelector 
+              onEmotionSelect={handleEmotionSelect}
+              selectedEmotions={checkInData.selectedEmotions}
             />
-            <div className="flex gap-3">
+            
+            {checkInData.selectedEmotions.length > 0 && (
+              <div className="card">
+                <h4 className="font-semibold mb-4">Selected Emotions:</h4>
+                <div className="space-y-3 mb-6">
+                  {checkInData.selectedEmotions.map((emotion, index) => (
+                    <div key={`${emotion.name}-${index}`} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <span className="text-lg">{emotion.icon}</span>
+                        <div>
+                          <div className="font-medium">{emotion.name}</div>
+                          <div className="text-sm text-gray-600">{emotion.category} • Intensity: {emotion.intensity}/10</div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => removeEmotion(index)}
+                        className="text-red-600 hover:text-red-800 text-sm"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                
+                <div className="flex justify-between">
+                  <button
+                    onClick={() => setCheckInData(prev => ({ ...prev, selectedEmotions: [] }))}
+                    className="text-gray-600 hover:text-gray-800"
+                  >
+                    Clear All
+                  </button>
+                  <button
+                    onClick={() => setStep(2)}
+                    className="btn-primary"
+                  >
+                    Continue to Reflection
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Step 2: Guided Reflection */}
+        {step === 2 && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-3 mb-6">
               <button 
-                onClick={() => setStep(2)} 
-                className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50"
+                onClick={() => setStep(1)}
+                className="text-gray-500 hover:text-gray-700"
               >
-                Back
+                ← Back to Emotions
               </button>
               <button 
-                onClick={handleSaveCheckIn} 
-                disabled={loading}
-                className="btn-primary"
+                onClick={() => setStep(3)}
+                className="text-blue-600 hover:text-blue-800 ml-auto"
               >
-                {loading ? 'Saving...' : 'Complete Check-In'}
+                Skip to Summary →
               </button>
+            </div>
+            
+            <GuidedReflection 
+              selectedEmotions={checkInData.selectedEmotions}
+              onReflectionComplete={handleReflectionComplete}
+            />
+          </div>
+        )}
+
+        {/* Step 3: Summary & Save */}
+        {step === 3 && (
+          <div className="space-y-6">
+            <div className="card">
+              <h2 className="text-2xl font-semibold mb-6">Check-In Summary</h2>
+              
+              {/* Emotions Summary */}
+              <div className="mb-6">
+                <h3 className="font-semibold mb-3">Your Emotions ({checkInData.selectedEmotions.length})</h3>
+                <div className="grid gap-3">
+                  {checkInData.selectedEmotions.map((emotion, index) => (
+                    <div key={`${emotion.name}-${index}`} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <span className="text-lg">{emotion.icon}</span>
+                        <div>
+                          <div className="font-medium">{emotion.name}</div>
+                          <div className="text-sm text-gray-600">
+                            {emotion.category} • {emotion.subcategory} • Intensity: {emotion.intensity}/10
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                  <div className="text-sm text-blue-800">
+                    <strong>Average Intensity:</strong> {
+                      Math.round(checkInData.selectedEmotions.reduce((sum, e) => sum + e.intensity, 0) / 
+                      checkInData.selectedEmotions.length * 10) / 10
+                    }/10
+                  </div>
+                  <div className="text-sm text-blue-800">
+                    <strong>Categories:</strong> {[...new Set(checkInData.selectedEmotions.map(e => e.category))].join(', ')}
+                  </div>
+                </div>
+              </div>
+
+              {/* Reflection Summary */}
+              {checkInData.reflectionData && (
+                <div className="mb-6">
+                  <h3 className="font-semibold mb-3">Reflection Insights</h3>
+                  <div className="text-sm text-gray-600 mb-2">
+                    You answered {checkInData.reflectionData.responses.length} reflection prompts across different categories.
+                  </div>
+                  <div className="p-3 bg-green-50 rounded-lg text-sm text-green-800">
+                    Great job taking time for deeper reflection! This will help you build emotional awareness over time.
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Notes */}
+              <div className="mb-6">
+                <label className="block font-semibold mb-2">Additional Notes (Optional)</label>
+                <textarea
+                  value={checkInData.quickNotes}
+                  onChange={(e) => setCheckInData(prev => ({ ...prev, quickNotes: e.target.value }))}
+                  placeholder="Any additional thoughts, context, or notes you'd like to remember..."
+                  className="input-field min-h-[80px]"
+                  maxLength={500}
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  {checkInData.quickNotes.length}/500 characters
+                </div>
+              </div>
+
+              {errors.save && (
+                <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
+                  {errors.save}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setStep(2)}
+                  className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Back to Reflection
+                </button>
+                <button 
+                  onClick={handleSaveCheckIn}
+                  disabled={loading || checkInData.selectedEmotions.length === 0}
+                  className="btn-primary flex-1"
+                >
+                  {loading ? 'Saving Check-In...' : 'Complete Check-In'}
+                </button>
+              </div>
             </div>
           </div>
         )}

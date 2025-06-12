@@ -1,32 +1,34 @@
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true // Only for MVP
-});
-
+// Secure API client - no direct OpenAI integration
 export const identifyEmotions = async (feelingDescription) => {
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: `You are an empathetic emotional check-in assistant. Based on the user's description, suggest exactly 5 specific, nuanced emotions they might be experiencing. Return ONLY a JSON array with this exact format: [{"name": "Emotion Name", "definition": "Brief 10-15 word definition", "intensity": 5}]. Intensity should be 1-10. Focus on specific emotions like "overwhelmed", "content", "melancholic" rather than basic ones like "sad" or "happy".`
-        },
-        {
-          role: "user",
-          content: feelingDescription
-        }
-      ],
-      temperature: 0.7,
-      max_tokens: 200
+    // Input validation
+    if (!feelingDescription || typeof feelingDescription !== 'string') {
+      throw new Error('Invalid feeling description');
+    }
+
+    // Limit input length
+    if (feelingDescription.length > 500) {
+      throw new Error('Description too long (max 500 characters)');
+    }
+
+    const response = await fetch('/api/identify-emotions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ feelingDescription }),
     });
 
-    const emotions = JSON.parse(response.choices[0].message.content);
-    return emotions;
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.emotions;
+
   } catch (error) {
-    console.error('OpenAI Error:', error);
+    console.error('Emotion identification error:', error);
+    
     // Fallback emotions if API fails
     return [
       { name: "Uncertain", definition: "Feeling unsure about your emotional state", intensity: 5 },
